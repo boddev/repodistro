@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+requests
+PyJWT 
+PyGithub
+starlette
+itsdangerous

@@ -1,0 +1,30 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python Debugger: Python File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}"
+        },
+        {
+            "name": "Python: FastAPI",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",  // Update with your main FastAPI file path
+            "args": [
+              "run",   // Optional: Add Uvicorn run command
+              "--host", "127.0.0.1",   // Optional: Define the host
+              "--port", "8000"   // Optional: Define the port
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "env": {
+              "DEBUG": "1"   // Optional: Enable debug mode
+            }
+          }
+    ]
+}

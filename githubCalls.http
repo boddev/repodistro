@@ -1,0 +1,34 @@
+### Home Endpoint
+GET http://127.0.0.1:8000/
+
+### Login Endpoint
+GET http://127.0.0.1:8000/login
+
+### Callback Endpoint
+GET http://127.0.0.1:8000/callback?code=your_code_here
+
+### Modify Repo Endpoint
+POST http://127.0.0.1:8000/modify_repo
+Content-Type: application/json
+
+{
+  "repo_name": "myGcTemplate",
+  "file_path": "ApiGraphActivator/BrewerySchema.cs",
+  "file_content": "using Microsoft.Graph.Models.ExternalConnectors;"
+}
+
+### Clone Template Endpoint
+POST http://127.0.0.1:8000/clone_template
+Content-Type: application/json
+
+{
+  "template_owner": "boddev",
+  "template_repo": "GraphConnectorApiTemplate",
+  "new_repo_owner": "bodoutlook",
+  "new_repo_name": "gcTemplateCopy"
+}
+
+### Get Schema Endpoint
+GET http://127.0.0.1:8000/get_schema?url=https://api.openbrewerydb.org/v1/breweries/random
+
+
