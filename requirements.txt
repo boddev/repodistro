@@ -5,3 +5,5 @@ PyJWT
 PyGithub
 starlette
 itsdangerous
+slowapi
+pydantic
