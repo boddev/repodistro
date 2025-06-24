@@ -1,3 +1,4 @@
+GET http://localhost:8000/logout
 ### Step 1: Check current auth status
 GET http://localhost:8000/auth/status
 
@@ -5,7 +6,7 @@ GET http://localhost:8000/auth/status
 GET http://localhost:8000/login
 
 ### Step 3: After visiting the login URL and being redirected, get the stored code
-GET http://localhost:8000/get_auth_token?code=a7ccf48dad334357e7d6
+GET http://localhost:8000/get_auth_token?code=fe0ba260b05afcde0673
 
 ### Step 5: Verify authentication worked
 GET http://localhost:8000/auth/status
@@ -15,7 +16,7 @@ POST http://localhost:8000/modify_repo
 Content-Type: application/json
 
 {
-    "repo_name": "test-repo",
+    "repo_name": "test-cloned-repo",
     "file_path": "test.txt",
     "file_content": "Hello from API test!"
 }
@@ -30,8 +31,14 @@ Content-Type: application/json
     "new_repo_name": "test-cloned-repo"
 }
 
-### Alternative: If you want to use auto-exchange (original behavior)
-GET http://localhost:8000/login?auto_exchange=true
+### DEBUG TOKEN
+GET http://localhost:8000/debug/token-permissions
+
+### Check OAuth URL (should show repo and user scopes)
+GET http://localhost:8000/debug/oauth-url
+
+### Debug oauth flow
+GET http://localhost:8000/debug/oauth-flow
 
 ### Get Schema Endpoint
 GET http://127.0.0.1:8000/get_schema?url=https://api.openbrewerydb.org/v1/breweries/random

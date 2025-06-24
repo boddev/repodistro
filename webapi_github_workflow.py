@@ -34,8 +34,8 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # GitHub OAuth Configuration
-CLIENT_ID = os.getenv('GITHUB_CLIENT_ID', 'Iv23liCgzwcJFuTpYgIz')
-CLIENT_SECRET = os.getenv('GITHUB_CLIENT_SECRET', '9b09bbdc3f508991fae3481c7f383705d324eee9')
+CLIENT_ID = os.getenv('GITHUB_CLIENT_ID', 'Ov23li8CQAivGoBQeDol')
+CLIENT_SECRET = os.getenv('GITHUB_CLIENT_SECRET', '2ce7252b751c6e1094f6d525a2513a4742fe684b')
 
 # Use YOUR API's callback endpoint - not Power Platform's
 REDIRECT_URI = os.getenv('REDIRECT_URI', 'http://localhost:8000/callback')  # Your API endpoint
@@ -190,6 +190,7 @@ async def login(request: Request):
     
     # Fix URL encoding - use proper URL encoding
     encoded_redirect_uri = urllib.parse.quote(REDIRECT_URI, safe='')
+    # Request repo and user scopes (repo includes public_repo permissions)
     auth_url = f"{AUTHORIZE_URL}?scope=repo%20user&client_id={CLIENT_ID}&redirect_uri={encoded_redirect_uri}"
     
     logger.info(f"Initiating GitHub OAuth authentication with API callback: {REDIRECT_URI}")
@@ -210,16 +211,19 @@ async def callback(request: Request):
         )
     
 
-    logger.info(f"Debug mode enabled for callback with code: {code}")
-    return JSONResponse(
-        content={
-            "message": "Debug mode is active",
-            "code": code,
-            "redirect_uri": REDIRECT_URI,
-            "client_id": CLIENT_ID
-        },
-        status_code=status.HTTP_200_OK
-    )
+    
+    debug = request.query_params.get('debug')
+    if debug and debug.lower() == 'true':
+        logger.info(f"Debug mode enabled for callback with code: {code}")
+        return JSONResponse(
+            content={
+                "message": "Debug mode is active",
+                "code": code,
+                "redirect_uri": REDIRECT_URI,
+                "client_id": CLIENT_ID
+            },
+            status_code=status.HTTP_200_OK
+        )
     
     try:
         # Exchange code for token using YOUR callback URI
@@ -516,6 +520,38 @@ async def clone_template(request: Request, clone_request: Optional[CloneTemplate
             "X-GitHub-Api-Version": "2022-11-28"
         }
         
+        # First, validate the template repository exists and is a template
+        template_url = f"https://api.github.com/repos/{template_owner}/{template_repo}"
+        template_response = requests.get(template_url, headers=headers)
+        
+        if template_response.status_code != 200:
+            logger.error(f"Template repository not found: {template_owner}/{template_repo}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Template repository {template_owner}/{template_repo} not found or not accessible"
+            )
+        
+        template_data = template_response.json()
+        
+        # Check if it's actually a template repository
+        if not template_data.get('is_template', False):
+            logger.error(f"Repository is not a template: {template_owner}/{template_repo}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Repository {template_owner}/{template_repo} is not configured as a template"
+            )
+        
+        # Check if repository with new name already exists
+        existing_repo_url = f"https://api.github.com/repos/{new_repo_owner}/{new_repo_name}"
+        existing_response = requests.get(existing_repo_url, headers=headers)
+        
+        if existing_response.status_code == 200:
+            logger.error(f"Repository already exists: {new_repo_owner}/{new_repo_name}")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Repository {new_repo_owner}/{new_repo_name} already exists"
+            )
+        
         payload = {
             "owner": new_repo_owner,
             "name": new_repo_name,
@@ -524,8 +560,17 @@ async def clone_template(request: Request, clone_request: Optional[CloneTemplate
             "private": False
         }
         
+        # Log the request for debugging
+        logger.info(f"Creating repository from template: {template_owner}/{template_repo} -> {new_repo_owner}/{new_repo_name}")
+        logger.info(f"Request payload: {payload}")
+        
         url = f"https://api.github.com/repos/{template_owner}/{template_repo}/generate"
         response = requests.post(url=url, headers=headers, json=payload)
+        
+        # Log detailed response for debugging
+        logger.info(f"GitHub API response status: {response.status_code}")
+        logger.info(f"GitHub API response headers: {dict(response.headers)}")
+        logger.info(f"GitHub API response body: {response.text}")
         
         if response.status_code == 201:
             repo_data = response.json()
@@ -542,8 +587,28 @@ async def clone_template(request: Request, clone_request: Optional[CloneTemplate
                     "user": user_info['login']
                 }
             )
+        elif response.status_code == 403:
+            error_data = response.json() if response.content else {}
+            error_message = error_data.get('message', 'Forbidden')
+            
+            # Common 403 reasons
+            if 'rate limit' in error_message.lower():
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="GitHub API rate limit exceeded. Please try again later."
+                )
+            elif 'permission' in error_message.lower() or 'access' in error_message.lower():
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Insufficient permissions to create repository from template. Token may need 'public_repo' scope. Error: {error_message}"
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"GitHub API access forbidden: {error_message}"
+                )
         else:
-            error_data = response.json()
+            error_data = response.json() if response.content else {}
             logger.error(f"GitHub API error: {response.status_code} - {error_data}")
             raise HTTPException(
                 status_code=response.status_code,
@@ -671,13 +736,16 @@ async def auth_status(request: Request):
 @app.get("/debug/oauth-url")
 async def get_oauth_url(request: Request):
     """Debug endpoint to see the exact OAuth URL being generated"""
-    auth_url = f"{AUTHORIZE_URL}?scope=repo%20user&client_id={CLIENT_ID}&redirect_uri={REDIRECT_URI}"
+    encoded_redirect_uri = urllib.parse.quote(REDIRECT_URI, safe='')
+    auth_url = f"{AUTHORIZE_URL}?scope=repo%20user&client_id={CLIENT_ID}&redirect_uri={encoded_redirect_uri}"
     
     return {
         "oauth_url": auth_url,
         "client_id": CLIENT_ID,
         "redirect_uri": REDIRECT_URI,
-        "scopes": "repo user"
+        "encoded_redirect_uri": encoded_redirect_uri,
+        "scopes": "repo user",
+        "note": "repo scope includes public_repo permissions"
     }
 
 @app.get("/debug/token-exchange")
@@ -709,6 +777,89 @@ async def debug_token_exchange(code: str):
     except Exception as e:
         return {"error": str(e)}
 
+@app.get("/debug/token-permissions")
+@limiter.limit("30/minute")
+async def debug_token_permissions(request: Request):
+    """Debug endpoint to check token permissions"""
+    try:
+        user_info = await get_github_user(request)
+        github_token = request.session['github_token']
+        
+        headers = {
+            "Authorization": f"Bearer {github_token}",
+            "Accept": "application/vnd.github+json"
+        }
+        
+        # Check token scopes using the correct endpoint
+        user_response = requests.get("https://api.github.com/user", headers=headers)
+        
+        # Also check the applications endpoint to see granted scopes
+        app_response = requests.get("https://api.github.com/applications/grants", headers=headers)
+        
+        # Try to access a repo to test repo scope
+        repos_response = requests.get("https://api.github.com/user/repos", headers=headers)
+        
+        return {
+            "user": user_info,
+            "token_scopes_header": user_response.headers.get('X-OAuth-Scopes', 'No scopes header found'),
+            "user_endpoint_status": user_response.status_code,
+            "repos_endpoint_status": repos_response.status_code,
+            "repos_access": repos_response.status_code == 200,
+            "rate_limit_remaining": user_response.headers.get('X-RateLimit-Remaining'),
+            "rate_limit_limit": user_response.headers.get('X-RateLimit-Limit'),
+            "all_user_headers": dict(user_response.headers),
+            "token_preview": f"{github_token[:10]}..." if github_token else "No token",
+            "can_access_repos": repos_response.status_code == 200,
+            "apps_endpoint_status": app_response.status_code if app_response else "Failed"
+        }
+        
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/debug/oauth-flow")
+async def debug_oauth_flow(request: Request):
+    """Complete OAuth flow debugging"""
+    
+    # Check what's in the session
+    session_data = {
+        "github_token_exists": 'github_token' in request.session,
+        "github_token_length": len(request.session.get('github_token', '')) if 'github_token' in request.session else 0,
+        "session_keys": list(request.session.keys())
+    }
+    
+    # Generate OAuth URL
+    encoded_redirect_uri = urllib.parse.quote(REDIRECT_URI, safe='')
+    auth_url = f"{AUTHORIZE_URL}?scope=repo%20user&client_id={CLIENT_ID}&redirect_uri={encoded_redirect_uri}"
+    
+    # Test if we can make GitHub API calls
+    github_api_test = {"status": "no_token"}
+    if 'github_token' in request.session:
+        try:
+            headers = {
+                "Authorization": f"Bearer {request.session['github_token']}",
+                "Accept": "application/vnd.github+json"
+            }
+            test_response = requests.get("https://api.github.com/user", headers=headers)
+            github_api_test = {
+                "status": "success" if test_response.status_code == 200 else "failed",
+                "status_code": test_response.status_code,
+                "response_headers": dict(test_response.headers),
+                "has_scopes_header": 'X-OAuth-Scopes' in test_response.headers
+            }
+        except Exception as e:
+            github_api_test = {"status": "error", "error": str(e)}
+    
+    return {
+        "oauth_config": {
+            "client_id": CLIENT_ID,
+            "redirect_uri": REDIRECT_URI,
+            "auth_url": auth_url,
+            "scopes_requested": "repo user"
+        },
+        "session_info": session_data,
+        "github_api_test": github_api_test
+    }
+
 # Error handlers
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
@@ -734,6 +885,23 @@ async def general_exception_handler(request: Request, exc: Exception):
             message="Internal server error",
             error_code="500"
         ).dict()
+    )
+
+@app.get("/logout")
+@limiter.limit("30/minute")
+async def logout(request: Request):
+    """
+    Clear authentication session
+    """
+    request.session.clear()
+    
+    return StandardResponse(
+        success=True,
+        message="Successfully logged out",
+        data={
+            "authenticated": False,
+            "login_url": "/login"
+        }
     )
 
 if __name__ == '__main__':
