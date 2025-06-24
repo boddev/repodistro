@@ -13,6 +13,7 @@ import time
 import logging
 from github import Github
 import os
+import urllib.parse
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -33,14 +34,16 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # GitHub OAuth Configuration
-CLIENT_ID = os.getenv('GITHUB_CLIENT_ID', 'Ov23li8CQAivGoBQeDol')
-CLIENT_SECRET = os.getenv('GITHUB_CLIENT_SECRET', '2ce7252b751c6e1094f6d525a2513a4742fe684b')
-REDIRECT_URI = os.getenv('REDIRECT_URI', 'https://{environment-name}.flow.microsoft.com/manage/oauthresponse')
+CLIENT_ID = os.getenv('GITHUB_CLIENT_ID', 'Iv23liCgzwcJFuTpYgIz')
+CLIENT_SECRET = os.getenv('GITHUB_CLIENT_SECRET', '9b09bbdc3f508991fae3481c7f383705d324eee9')
+
+# Use YOUR API's callback endpoint - not Power Platform's
+REDIRECT_URI = os.getenv('REDIRECT_URI', 'http://localhost:8000/callback')  # Your API endpoint
 
 # GitHub OAuth URLs
 AUTHORIZE_URL = 'https://github.com/login/oauth/authorize'
 TOKEN_URL = 'https://github.com/login/oauth/access_token'
-API_URL = 'https://api.github.com'
+API_URL = 'https://api.github.com/'
 
 # CORS Configuration for Power Platform
 app.add_middleware(
@@ -81,7 +84,6 @@ class CloneTemplateRequest(BaseModel):
     """Request model for cloning template repositories"""
     template_owner: str = Field(..., description="Owner of the template repository")
     template_repo: str = Field(..., description="Name of the template repository")
-    new_repo_owner: str = Field(..., description="Owner for the new repository")
     new_repo_name: str = Field(..., description="Name for the new repository")
 
 class StandardResponse(BaseModel):
@@ -174,34 +176,31 @@ async def home(request: Request):
         }
     )
 
-@app.get("/login", response_model=StandardResponse)
+@app.get("/login")
 @limiter.limit("10/minute")
 async def login(request: Request):
     """
     Initiate GitHub OAuth2 authentication flow
-    
-    Returns:
-        RedirectResponse: Redirect to GitHub OAuth login
+    Always uses YOUR API's callback endpoint
     """
-    auth_url = f"{AUTHORIZE_URL}?scope=repo,user&client_id={CLIENT_ID}&redirect_uri={REDIRECT_URI}"
+    # Store the original requester info for later redirect
+    power_platform_callback = request.query_params.get('callback_url')
+    if power_platform_callback:
+        request.session['power_platform_callback'] = power_platform_callback
     
-    logger.info("Initiating GitHub OAuth authentication")
+    # Fix URL encoding - use proper URL encoding
+    encoded_redirect_uri = urllib.parse.quote(REDIRECT_URI, safe='')
+    auth_url = f"{AUTHORIZE_URL}?scope=repo%20user&client_id={CLIENT_ID}&redirect_uri={encoded_redirect_uri}"
+    
+    logger.info(f"Initiating GitHub OAuth authentication with API callback: {REDIRECT_URI}")
     return RedirectResponse(auth_url)
 
-@app.get("/callback", response_model=StandardResponse)
+@app.get("/callback")
 @limiter.limit("10/minute")
 async def callback(request: Request):
     """
     Handle OAuth2 callback from GitHub
-    
-    Args:
-        request: FastAPI request object containing authorization code
-        
-    Returns:
-        StandardResponse: Authentication result
-        
-    Raises:
-        HTTPException: If authentication fails
+    This is YOUR API endpoint that GitHub calls back to
     """
     code = request.query_params.get('code')
     if not code:
@@ -210,8 +209,21 @@ async def callback(request: Request):
             detail="Authorization code not provided"
         )
     
+
+    logger.info(f"Debug mode enabled for callback with code: {code}")
+    return JSONResponse(
+        content={
+            "message": "Debug mode is active",
+            "code": code,
+            "redirect_uri": REDIRECT_URI,
+            "client_id": CLIENT_ID
+        },
+        status_code=status.HTTP_200_OK
+    )
+    
     try:
-        token = await get_access_token(code)
+        # Exchange code for token using YOUR callback URI
+        token = await get_access_token(code, REDIRECT_URI)
         request.session['github_token'] = token
         
         # Get user info to verify token
@@ -219,16 +231,17 @@ async def callback(request: Request):
         
         logger.info(f"User authenticated successfully: {user_info['login']}")
         
-        # Handle edit flow if needed
-        try:
-            edit = request.session.get('edit', False)
-            if edit:
-                logger.info('Processing edit request after authentication')
-                request.session['edit'] = False
-                return await modify_repo_internal(request)
-        except Exception as e:
-            logger.warning(f"Edit flow error: {str(e)}")
+        # Check if this came from Power Platform and redirect back
+        power_platform_callback = request.session.get('power_platform_callback')
+        if power_platform_callback:
+            # Clean up session
+            del request.session['power_platform_callback']
+            
+            # Redirect back to Power Platform with success indicator
+            callback_url = f"{power_platform_callback}?auth_success=true&user={user_info['login']}"
+            return RedirectResponse(callback_url)
         
+        # Direct API access - return JSON response
         return StandardResponse(
             success=True,
             message="GitHub authentication successful",
@@ -240,43 +253,152 @@ async def callback(request: Request):
         
     except Exception as e:
         logger.error(f"Authentication callback error: {str(e)}")
+        
+        # If from Power Platform, redirect back with error
+        power_platform_callback = request.session.get('power_platform_callback')
+        if power_platform_callback:
+            callback_url = f"{power_platform_callback}?auth_success=false&error={str(e)}"
+            return RedirectResponse(callback_url)
+        
+        # Direct API access - return error
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"GitHub authentication failed: {str(e)}"
+        )
+    
+@app.get("/get_auth_token")
+@limiter.limit("10/minute")
+async def get_auth_token(request: Request):
+    code = request.query_params.get('code')
+    try:
+        # Exchange code for token using YOUR callback URI
+        token = await get_access_token(code, REDIRECT_URI)
+        request.session['github_token'] = token
+        
+        # Get user info to verify token
+        user_info = await get_github_user(request)
+        
+        logger.info(f"User authenticated successfully: {user_info['login']}")
+        
+        # Check if this came from Power Platform and redirect back
+        power_platform_callback = request.session.get('power_platform_callback')
+        if power_platform_callback:
+            # Clean up session
+            del request.session['power_platform_callback']
+            
+            # Redirect back to Power Platform with success indicator
+            callback_url = f"{power_platform_callback}?auth_success=true&user={user_info['login']}"
+            return RedirectResponse(callback_url)
+        
+        # Direct API access - return JSON response
+        return StandardResponse(
+            success=True,
+            message="GitHub authentication successful",
+            data={
+                "authenticated": True,
+                "user": user_info
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Authentication callback error: {str(e)}")
+        
+        # If from Power Platform, redirect back with error
+        power_platform_callback = request.session.get('power_platform_callback')
+        if power_platform_callback:
+            callback_url = f"{power_platform_callback}?auth_success=false&error={str(e)}"
+            return RedirectResponse(callback_url)
+        
+        # Direct API access - return error
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"GitHub authentication failed: {str(e)}"
         )
 
-async def get_access_token(code: str) -> str:
+async def get_access_token(code: str, redirect_uri: str) -> str:
     """
     Exchange authorization code for GitHub access token
-    
-    Args:
-        code: Authorization code from GitHub
-        
-    Returns:
-        str: GitHub access token
-        
-    Raises:
-        Exception: If token exchange fails
+    Always uses YOUR API's callback URI
     """
     data = {
         'client_id': CLIENT_ID,
         'client_secret': CLIENT_SECRET,
         'code': code,
-        'redirect_uri': REDIRECT_URI
+        'redirect_uri': redirect_uri
     }
     
-    response = requests.post(
-        TOKEN_URL, 
-        headers={'Accept': 'application/json'}, 
-        data=data
-    )
-    response_data = response.json()
+    # Log the request data (without exposing the secret)
+    log_data = data.copy()
+    log_data['client_secret'] = f"{CLIENT_SECRET[:8]}..." if CLIENT_SECRET else "NOT_SET"
+    logger.info(f"Token exchange request data: {log_data}")
     
-    if 'access_token' not in response_data:
-        error_msg = response_data.get('error_description', 'Unknown error')
-        raise Exception(f"Failed to obtain access token: {error_msg}")
-    
-    return response_data['access_token']
+    try:
+        logger.info(f"Making POST request to: {TOKEN_URL}")
+        response = requests.post(
+            TOKEN_URL, 
+            headers={'Accept': 'application/json'}, 
+            data=data,
+            timeout=30
+        )
+        
+        # Log the response details
+        logger.info(f"Token exchange response status: {response.status_code}")
+        logger.info(f"Token exchange response headers: {dict(response.headers)}")
+        logger.info(f"Token exchange response text: {response.text}")
+        
+        if response.status_code != 200:
+            raise Exception(f"HTTP {response.status_code}: {response.text}")
+            
+        response_data = response.json()
+        logger.info(f"Parsed response data keys: {list(response_data.keys())}")
+        
+        if 'error' in response_data:
+            error_msg = response_data.get('error_description', response_data.get('error', 'Unknown error'))
+            logger.error(f"GitHub OAuth error in response: {error_msg}")
+            raise Exception(f"GitHub OAuth error: {error_msg}")
+        
+        if 'access_token' not in response_data:
+            logger.error(f"No access token in response. Response data: {response_data}")
+            raise Exception(f"No access token in response: {response_data}")
+        
+        logger.info("Access token successfully obtained")
+        return response_data['access_token']
+        
+    except requests.RequestException as e:
+        logger.error(f"Network error during token exchange: {str(e)}")
+        raise Exception(f"Network error during token exchange: {str(e)}")
+    except Exception as e:
+        logger.error(f"Token exchange failed with exception: {str(e)}")
+        raise
+
+# Add endpoint for Power Platform to check auth status
+@app.get("/auth/check")
+@limiter.limit("100/minute")
+async def check_auth_for_power_platform(request: Request, session_id: Optional[str] = None):
+    """
+    Check if user is authenticated - designed for Power Platform polling
+    """
+    try:
+        user_info = await get_github_user(request)
+        return StandardResponse(
+            success=True,
+            message="User is authenticated",
+            data={
+                "authenticated": True,
+                "user": user_info,
+                "github_token_exists": True
+            }
+        )
+    except HTTPException:
+        return StandardResponse(
+            success=False,
+            message="User is not authenticated",
+            data={
+                "authenticated": False,
+                "login_url": f"/login?callback_url=https://your-power-platform-callback-url.com",
+                "github_token_exists": False
+            }
+        )
 
 @app.post("/modify_repo", response_model=StandardResponse)
 @limiter.limit("30/minute")
@@ -380,12 +502,12 @@ async def clone_template(request: Request, clone_request: Optional[CloneTemplate
         if clone_request is None:
             template_owner = 'boddev'
             template_repo = 'GraphConnectorApiTemplate'
-            new_repo_owner = 'bodoutlook'
+            new_repo_owner = user_info.get('login', 'default_owner')
             new_repo_name = 'myGcTemplate'
         else:
             template_owner = clone_request.template_owner
             template_repo = clone_request.template_repo
-            new_repo_owner = clone_request.new_repo_owner
+            new_repo_owner = user_info.get('login', 'default_owner')
             new_repo_name = clone_request.new_repo_name
         
         headers = {
@@ -402,7 +524,7 @@ async def clone_template(request: Request, clone_request: Optional[CloneTemplate
             "private": False
         }
         
-        url = f"{API_URL}/repos/{template_owner}/{template_repo}/generate"
+        url = f"https://api.github.com/repos/{template_owner}/{template_repo}/generate"
         response = requests.post(url=url, headers=headers, json=payload)
         
         if response.status_code == 201:
@@ -544,6 +666,48 @@ async def auth_status(request: Request):
                 "login_url": "/login"
             }
         )
+
+# Debug endpoints
+@app.get("/debug/oauth-url")
+async def get_oauth_url(request: Request):
+    """Debug endpoint to see the exact OAuth URL being generated"""
+    auth_url = f"{AUTHORIZE_URL}?scope=repo%20user&client_id={CLIENT_ID}&redirect_uri={REDIRECT_URI}"
+    
+    return {
+        "oauth_url": auth_url,
+        "client_id": CLIENT_ID,
+        "redirect_uri": REDIRECT_URI,
+        "scopes": "repo user"
+    }
+
+@app.get("/debug/token-exchange")
+async def debug_token_exchange(code: str):
+    """Debug endpoint to see what GitHub returns during token exchange"""
+    data = {
+        'client_id': CLIENT_ID,
+        'client_secret': CLIENT_SECRET,
+        'code': code,
+        'redirect_uri': REDIRECT_URI
+    }
+    
+    try:
+        response = requests.post(
+            TOKEN_URL, 
+            headers={'Accept': 'application/json'}, 
+            data=data
+        )
+        
+        return {
+            "status_code": response.status_code,
+            "response_data": response.json(),
+            "request_data": {
+                "client_id": CLIENT_ID,
+                "redirect_uri": REDIRECT_URI,
+                "code_length": len(code)
+            }
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 # Error handlers
 @app.exception_handler(HTTPException)

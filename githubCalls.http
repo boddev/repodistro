@@ -1,32 +1,37 @@
-### Home Endpoint
-GET http://127.0.0.1:8000/
+### Step 1: Check current auth status
+GET http://localhost:8000/auth/status
 
-### Login Endpoint
-GET http://127.0.0.1:8000/login
+### Step 2: Initiate OAuth (visit this URL in browser - it will NOT auto-exchange)
+GET http://localhost:8000/login
 
-### Callback Endpoint
-GET http://127.0.0.1:8000/callback?code=your_code_here
+### Step 3: After visiting the login URL and being redirected, get the stored code
+GET http://localhost:8000/get_auth_token?code=a7ccf48dad334357e7d6
 
-### Modify Repo Endpoint
-POST http://127.0.0.1:8000/modify_repo
+### Step 5: Verify authentication worked
+GET http://localhost:8000/auth/status
+
+### Step 6: Test modify repo endpoint
+POST http://localhost:8000/modify_repo
 Content-Type: application/json
 
 {
-  "repo_name": "myGcTemplate",
-  "file_path": "ApiGraphActivator/BrewerySchema.cs",
-  "file_content": "using Microsoft.Graph.Models.ExternalConnectors;"
+    "repo_name": "test-repo",
+    "file_path": "test.txt",
+    "file_content": "Hello from API test!"
 }
 
-### Clone Template Endpoint
-POST http://127.0.0.1:8000/clone_template
+### Step 7: Test clone template endpoint
+POST http://localhost:8000/clone_template
 Content-Type: application/json
 
 {
-  "template_owner": "boddev",
-  "template_repo": "GraphConnectorApiTemplate",
-  "new_repo_owner": "bodoutlook",
-  "new_repo_name": "gcTemplateCopy"
+    "template_owner": "boddev",
+    "template_repo": "GraphConnectorApiTemplate",
+    "new_repo_name": "test-cloned-repo"
 }
+
+### Alternative: If you want to use auto-exchange (original behavior)
+GET http://localhost:8000/login?auto_exchange=true
 
 ### Get Schema Endpoint
 GET http://127.0.0.1:8000/get_schema?url=https://api.openbrewerydb.org/v1/breweries/random
