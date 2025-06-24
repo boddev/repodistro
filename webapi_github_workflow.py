@@ -52,6 +52,7 @@ app.add_middleware(
         "https://*.flow.microsoft.com",
         "https://*.powerapps.com",
         "https://*.dynamics.com",
+        "https://connectorcreator.azurewebsites.net", 
         "http://localhost:*",
         "http://127.0.0.1:*"
     ],
