@@ -626,6 +626,53 @@ async def clone_template(request: Request, clone_request: Optional[CloneTemplate
             detail=f"Failed to clone template: {str(e)}"
         )
 
+@app.post("/clone_template_with_token", response_model=StandardResponse)
+@limiter.limit("10/minute")
+async def clone_template_with_token(
+    request: Request, 
+    github_token: str,
+    clone_request: Optional[CloneTemplateRequest] = None
+):
+    """
+    Clone template with direct token - no session required
+    Perfect for Power Platform Agent integration
+    """
+    try:
+        # Validate token and get user info
+        headers = {
+            "Authorization": f"Bearer {github_token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28"
+        }
+        
+        user_response = requests.get("https://api.github.com/user", headers=headers)
+        if user_response.status_code != 200:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid GitHub token"
+            )
+        
+        user_info = user_response.json()
+        
+        # Rest of your clone_template logic here...
+        # Use the same logic but with direct token instead of session
+        
+        return StandardResponse(
+            success=True,
+            message="Repository created successfully from template",
+            data={
+                "new_repository": f"{user_info['login']}/{new_repo_name}",
+                "user": user_info['login']
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Clone template with token error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to clone template: {str(e)}"
+        )
+
 @app.get("/get_schema", response_model=StandardResponse)
 @limiter.limit("60/minute")
 async def get_endpoint_schema(request: Request, url: str):
@@ -904,6 +951,53 @@ async def logout(request: Request):
             "login_url": "/login"
         }
     )
+
+@app.post("/authenticate", response_model=StandardResponse)
+@limiter.limit("10/minute")
+async def authenticate_with_token(request: Request, github_token: str):
+    """
+    Direct authentication with GitHub personal access token
+    Better for Power Platform Agent integration
+    """
+    try:
+        # Validate the token directly
+        headers = {
+            "Authorization": f"Bearer {github_token}",
+            "Accept": "application/vnd.github+json"
+        }
+        
+        response = requests.get("https://api.github.com/user", headers=headers)
+        
+        if response.status_code == 200:
+            user_data = response.json()
+            
+            # Store token in session
+            request.session['github_token'] = github_token
+            
+            return StandardResponse(
+                success=True,
+                message="Authentication successful",
+                data={
+                    "authenticated": True,
+                    "user": {
+                        "login": user_data.get("login"),
+                        "name": user_data.get("name"),
+                        "id": user_data.get("id"),
+                        "avatar_url": user_data.get("avatar_url")
+                    }
+                }
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid GitHub token"
+            )
+            
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Authentication failed: {str(e)}"
+        )
 
 if __name__ == '__main__':
     import uvicorn
