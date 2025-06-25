@@ -6,7 +6,7 @@ GET http://localhost:8000/auth/status
 GET http://localhost:8000/login
 
 ### Step 3: After visiting the login URL and being redirected, get the stored code
-GET http://localhost:8000/get_auth_token?code=fe0ba260b05afcde0673
+GET http://localhost:8000/get_auth_token?code=YOUR_CODE_HERE
 
 ### Step 5: Verify authentication worked
 GET http://localhost:8000/auth/status
@@ -30,6 +30,13 @@ Content-Type: application/json
     "template_repo": "GraphConnectorApiTemplate",
     "new_repo_name": "test-cloned-repo"
 }
+
+### Direct Token Auth - Fixed with form data
+POST http://localhost:8000/authenticate
+Content-Type: application/x-www-form-urlencoded
+
+github_token=my_github_token_here
+
 
 ### DEBUG TOKEN
 GET http://localhost:8000/debug/token-permissions

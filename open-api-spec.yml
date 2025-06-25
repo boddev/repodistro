@@ -5,12 +5,12 @@ info:
   version: 1.0.0
   contact:
     name: API Support
-    url: https://connectorcreator.azurewebsites.net
+    url: https://connectorcreator-fyduenajachkcxax.northcentralus-01.azurewebsites.net
   license:
     name: MIT
     
 servers:
-  - url: https://connectorcreator.azurewebsites.net
+  - url: https://connectorcreator-fyduenajachkcxax.northcentralus-01.azurewebsites.net
     description: Production server
   - url: http://localhost:8000
     description: Development server
@@ -41,6 +41,9 @@ paths:
                     login: "GET /login - Initiate GitHub OAuth"
                     callback: "GET /callback - OAuth callback handler"
                     modify_repo: "POST /modify_repo - Modify repository files"
+                    clone_template: "POST /clone_template - Clone template repository"
+                    get_schema: "GET /get_schema - Retrieve API schema"
+                    health: "GET /health - Health check"
 
   /login:
     get:
@@ -105,6 +108,75 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '500':
           description: Authentication failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /get_auth_token:
+    get:
+      summary: Get Authentication Token
+      description: Alternative endpoint to exchange code for token (for debugging)
+      operationId: getAuthToken
+      tags:
+        - Authentication
+      parameters:
+        - name: code
+          in: query
+          description: Authorization code from GitHub
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Authentication successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+        '302':
+          description: Redirect to Power Platform callback URL
+        '500':
+          description: Authentication failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /authenticate:
+    post:
+      summary: Direct Token Authentication
+      description: Authenticate directly with GitHub personal access token (better for Power Platform Agent integration)
+      operationId: authenticateWithToken
+      tags:
+        - Authentication
+      parameters:
+        - name: github_token
+          in: query
+          description: GitHub personal access token
+          required: true
+          schema:
+            type: string
+          example: "ghp_xxxxxxxxxxxxxxxxxxxx"
+      responses:
+        '200':
+          description: Authentication successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                success: true
+                message: "Authentication successful"
+                data:
+                  authenticated: true
+                  user:
+                    login: "username"
+                    name: "User Name"
+                    id: 12345
+                    avatar_url: "https://github.com/avatar.jpg"
+        '401':
+          description: Invalid GitHub token
           content:
             application/json:
               schema:
@@ -176,7 +248,7 @@ paths:
       tags:
         - Repository Operations
       security:
-        - GitHubOAuth: [repo]
+        - SessionAuth: []
       requestBody:
         required: true
         content:
@@ -223,7 +295,7 @@ paths:
       tags:
         - Repository Operations
       security:
-        - GitHubOAuth: [repo]
+        - SessionAuth: []
       requestBody:
         required: false
         content:
@@ -249,6 +321,7 @@ paths:
                   template: "boddev/GraphConnectorApiTemplate"
                   clone_url: "https://github.com/username/my-new-connector.git"
                   html_url: "https://github.com/username/my-new-connector"
+                  user: "username"
         '400':
           description: Bad request - invalid template or repository exists
           content:
@@ -275,6 +348,63 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '409':
           description: Repository with same name already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /clone_template_with_token:
+    post:
+      summary: Clone Template with Direct Token
+      description: Create a new repository from a template using direct token authentication (perfect for Power Platform Agent integration)
+      operationId: cloneTemplateWithToken
+      tags:
+        - Repository Operations
+      parameters:
+        - name: github_token
+          in: query
+          description: GitHub personal access token
+          required: true
+          schema:
+            type: string
+          example: "ghp_xxxxxxxxxxxxxxxxxxxx"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CloneTemplateRequest'
+            example:
+              template_owner: "boddev"
+              template_repo: "GraphConnectorApiTemplate"
+              new_repo_name: "my-new-connector"
+      responses:
+        '200':
+          description: Repository cloned successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+              example:
+                success: true
+                message: "Repository created successfully from template"
+                data:
+                  new_repository: "username/my-new-connector"
+                  user: "username"
+        '401':
+          description: Invalid GitHub token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Failed to clone template
           content:
             application/json:
               schema:
@@ -417,6 +547,13 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status_code:
+                    type: integer
+                  response_data:
+                    type: object
+                  request_data:
+                    type: object
 
   /debug/token-permissions:
     get:
@@ -426,7 +563,7 @@ paths:
       tags:
         - Debug
       security:
-        - GitHubOAuth: []
+        - SessionAuth: []
       responses:
         '200':
           description: Token permissions information
@@ -434,6 +571,23 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  user:
+                    $ref: '#/components/schemas/GitHubUser'
+                  token_scopes_header:
+                    type: string
+                  user_endpoint_status:
+                    type: integer
+                  repos_endpoint_status:
+                    type: integer
+                  repos_access:
+                    type: boolean
+                  rate_limit_remaining:
+                    type: string
+                  rate_limit_limit:
+                    type: string
+                  can_access_repos:
+                    type: boolean
 
   /debug/oauth-flow:
     get:
@@ -449,9 +603,30 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  oauth_config:
+                    type: object
+                    properties:
+                      client_id:
+                        type: string
+                      redirect_uri:
+                        type: string
+                      auth_url:
+                        type: string
+                      scopes_requested:
+                        type: string
+                  session_info:
+                    type: object
+                  github_api_test:
+                    type: object
 
 components:
   securitySchemes:
+    SessionAuth:
+      type: apiKey
+      in: cookie
+      name: session
+      description: Session-based authentication using GitHub OAuth token stored in session
     GitHubOAuth:
       type: oauth2
       flows:
@@ -530,14 +705,17 @@ components:
           type: string
           description: Owner of the template repository
           example: "boddev"
+          default: "boddev"
         template_repo:
           type: string
           description: Name of the template repository
           example: "GraphConnectorApiTemplate"
+          default: "GraphConnectorApiTemplate"
         new_repo_name:
           type: string
           description: Name for the new repository
           example: "my-new-connector"
+          default: "myGcTemplate"
 
     GitHubUser:
       type: object
@@ -571,4 +749,4 @@ tags:
 
 externalDocs:
   description: FastAPI Documentation
-  url: https://connectorcreator.azurewebsites.net/docs
+  url: https://connectorcreator-fyduenajachkcxax.northcentralus-01.azurewebsites.net/docs
