@@ -38,7 +38,7 @@ CLIENT_ID = os.getenv('GITHUB_CLIENT_ID', 'Ov23li8CQAivGoBQeDol')
 CLIENT_SECRET = os.getenv('GITHUB_CLIENT_SECRET', '2ce7252b751c6e1094f6d525a2513a4742fe684b')
 
 # Use YOUR API's callback endpoint - not Power Platform's
-REDIRECT_URI = os.getenv('REDIRECT_URI', 'http://localhost:8000/callback')  # Your API endpoint
+REDIRECT_URI = os.getenv('REDIRECT_URI', 'https://connectorcreator-fyduenajachkcxax.northcentralus-01.azurewebsites.net/callback')  # Your API endpoint
 
 # GitHub OAuth URLs
 AUTHORIZE_URL = 'https://github.com/login/oauth/authorize'
