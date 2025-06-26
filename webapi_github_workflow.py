@@ -215,25 +215,30 @@ async def logging_middleware(request: Request, call_next):
     
     return response
 
-async def get_github_user(request: Request):
+async def get_github_token_from_request(request: Request) -> str:
     """
-    Validate GitHub token and return user information
+    Get GitHub token from either session (for direct API calls) or Authorization header (for Power Platform)
+    """
+    # First try to get from Authorization header (Power Platform style)
+    auth_header = request.headers.get('Authorization')
+    if auth_header and auth_header.startswith('Bearer '):
+        return auth_header[7:]  # Remove 'Bearer ' prefix
     
-    Args:
-        request: FastAPI request object
-        
-    Returns:
-        GitHub user information
-        
-    Raises:
-        HTTPException: If token is invalid or missing
-    """
+    # Fallback to session (for direct API calls)
     github_token = request.session.get('github_token')
-    if not github_token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="GitHub authentication required. Please visit /login"
-        )
+    if github_token:
+        return github_token
+    
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="GitHub token required. Provide via Authorization header or authenticate via /login"
+    )
+
+async def get_github_user_flexible(request: Request):
+    """
+    Updated version that works with both session and header tokens
+    """
+    github_token = await get_github_token_from_request(request)
     
     try:
         g = Github(github_token)
@@ -248,7 +253,7 @@ async def get_github_user(request: Request):
         logger.error(f"GitHub authentication error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid GitHub token. Please re-authenticate"
+            detail="Invalid GitHub token"
         )
 
 @app.get("/", response_model=StandardResponse)
@@ -805,9 +810,13 @@ async def modify_repo(request: Request, repo_request: ModifyRepoRequest):
     """
     try:
         # Check authentication
-        user_info = await get_github_user(request)
-        
-        github_token = request.session['github_token']
+        # user_info = await get_github_user(request)       
+        # github_token = request.session['github_token']
+
+        # Use the flexible authentication
+        user_info = await get_github_user_flexible(request)
+        github_token = await get_github_token_from_request(request)
+
         g = Github(github_token)
         user = g.get_user()
         
@@ -882,8 +891,12 @@ async def clone_template(request: Request, clone_request: Optional[CloneTemplate
     """
     try:
         # Check authentication
-        user_info = await get_github_user(request)
-        github_token = request.session['github_token']
+        # user_info = await get_github_user(request)
+        # github_token = request.session['github_token']
+
+        # Use the flexible authentication
+        user_info = await get_github_user_flexible(request)
+        github_token = await get_github_token_from_request(request)
         
         # Handle backward compatibility with hardcoded values
         if clone_request is None:
