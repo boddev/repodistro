@@ -8,3 +8,5 @@ itsdangerous
 slowapi
 pydantic
 python-multipart
+opencensus-ext-azure>=1.1.13
+opencensus-ext-logging>=0.1.1

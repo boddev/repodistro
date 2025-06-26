@@ -1,4 +1,4 @@
-openapi: 3.0.3
+swagger: "2.0"
 info:
   title: GitHub Integration API for Power Platform
   description: Secure GitHub repository management API with Power Platform integration
@@ -8,12 +8,29 @@ info:
     url: https://connectorcreator-fyduenajachkcxax.northcentralus-01.azurewebsites.net
   license:
     name: MIT
-    
-servers:
-  - url: https://connectorcreator-fyduenajachkcxax.northcentralus-01.azurewebsites.net
-    description: Production server
-  - url: http://localhost:8000
-    description: Development server
+
+host: connectorcreator-fyduenajachkcxax.northcentralus-01.azurewebsites.net
+basePath: /
+schemes:
+  - https
+
+consumes:
+  - application/json
+produces:
+  - application/json
+
+securityDefinitions:
+  oauth2_auth:
+    type: oauth2
+    flow: accessCode
+    authorizationUrl: https://github.com/login/oauth/authorize
+    tokenUrl: https://github.com/login/oauth/access_token
+    scopes:
+      repo: Repository access
+      user: User information
+
+security:
+  - oauth2_auth: [repo, user]
 
 paths:
   /:
@@ -24,26 +41,10 @@ paths:
       tags:
         - General
       responses:
-        '200':
+        200:
           description: API information retrieved successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/StandardResponse'
-              example:
-                success: true
-                message: "GitHub Integration API for Power Platform"
-                data:
-                  version: "1.0.0"
-                  documentation: "/docs"
-                  authentication: "/login"
-                  endpoints:
-                    login: "GET /login - Initiate GitHub OAuth"
-                    callback: "GET /callback - OAuth callback handler"
-                    modify_repo: "POST /modify_repo - Modify repository files"
-                    clone_template: "POST /clone_template - Clone template repository"
-                    get_schema: "GET /get_schema - Retrieve API schema"
-                    health: "GET /health - Health check"
+          schema:
+            $ref: '#/definitions/StandardResponse'
 
   /login:
     get:
@@ -57,18 +58,11 @@ paths:
           in: query
           description: Power Platform callback URL for post-authentication redirect
           required: false
-          schema:
-            type: string
-            format: uri
+          type: string
+          format: uri
       responses:
-        '302':
+        302:
           description: Redirect to GitHub OAuth authorization page
-          headers:
-            Location:
-              description: GitHub OAuth authorization URL
-              schema:
-                type: string
-                format: uri
 
   /callback:
     get:
@@ -82,36 +76,28 @@ paths:
           in: query
           description: Authorization code from GitHub
           required: true
-          schema:
-            type: string
+          type: string
         - name: debug
           in: query
           description: Enable debug mode for troubleshooting
           required: false
-          schema:
-            type: string
-            enum: [true, false]
+          type: string
+          enum: [true, false]
       responses:
-        '200':
+        200:
           description: Authentication successful
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/StandardResponse'
-        '302':
+          schema:
+            $ref: '#/definitions/StandardResponse'
+        302:
           description: Redirect to Power Platform callback URL
-        '400':
+        400:
           description: Bad request - missing authorization code
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '500':
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        500:
           description: Authentication failed
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
+          schema:
+            $ref: '#/definitions/ErrorResponse'
 
   /get_auth_token:
     get:
@@ -125,28 +111,23 @@ paths:
           in: query
           description: Authorization code from GitHub
           required: true
-          schema:
-            type: string
+          type: string
       responses:
-        '200':
+        200:
           description: Authentication successful
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/StandardResponse'
-        '302':
+          schema:
+            $ref: '#/definitions/StandardResponse'
+        302:
           description: Redirect to Power Platform callback URL
-        '500':
+        500:
           description: Authentication failed
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
+          schema:
+            $ref: '#/definitions/ErrorResponse'
 
   /authenticate:
     post:
       summary: Direct Token Authentication
-      description: Authenticate directly with GitHub personal access token (better for Power Platform Agent integration)
+      description: Authenticate directly with GitHub personal access token
       operationId: authenticateWithToken
       tags:
         - Authentication
@@ -155,32 +136,16 @@ paths:
           in: query
           description: GitHub personal access token
           required: true
-          schema:
-            type: string
-          example: "ghp_xxxxxxxxxxxxxxxxxxxx"
+          type: string
       responses:
-        '200':
+        200:
           description: Authentication successful
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/StandardResponse'
-              example:
-                success: true
-                message: "Authentication successful"
-                data:
-                  authenticated: true
-                  user:
-                    login: "username"
-                    name: "User Name"
-                    id: 12345
-                    avatar_url: "https://github.com/avatar.jpg"
-        '401':
+          schema:
+            $ref: '#/definitions/StandardResponse'
+        401:
           description: Invalid GitHub token
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
+          schema:
+            $ref: '#/definitions/ErrorResponse'
 
   /auth/status:
     get:
@@ -190,33 +155,10 @@ paths:
       tags:
         - Authentication
       responses:
-        '200':
+        200:
           description: Authentication status retrieved
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/StandardResponse'
-              examples:
-                authenticated:
-                  summary: User is authenticated
-                  value:
-                    success: true
-                    message: "User is authenticated"
-                    data:
-                      authenticated: true
-                      user:
-                        login: "username"
-                        name: "User Name"
-                        id: 12345
-                        avatar_url: "https://github.com/avatar.jpg"
-                not_authenticated:
-                  summary: User is not authenticated
-                  value:
-                    success: false
-                    message: "User is not authenticated"
-                    data:
-                      authenticated: false
-                      login_url: "/login"
+          schema:
+            $ref: '#/definitions/StandardResponse'
 
   /auth/check:
     get:
@@ -230,15 +172,12 @@ paths:
           in: query
           description: Optional session identifier
           required: false
-          schema:
-            type: string
+          type: string
       responses:
-        '200':
+        200:
           description: Authentication status for Power Platform
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/StandardResponse'
+          schema:
+            $ref: '#/definitions/StandardResponse'
 
   /modify_repo:
     post:
@@ -247,45 +186,26 @@ paths:
       operationId: modifyRepository
       tags:
         - Repository Operations
-      security:
-        - SessionAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ModifyRepoRequest'
-            example:
-              repo_name: "my-repository"
-              file_path: "src/main.py"
-              file_content: "print('Hello World')"
+      parameters:
+        - name: body
+          in: body
+          description: Repository modification request
+          required: true
+          schema:
+            $ref: '#/definitions/ModifyRepoRequest'
       responses:
-        '200':
+        200:
           description: File modified successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/StandardResponse'
-              example:
-                success: true
-                message: "File updated successfully"
-                data:
-                  repository: "username/my-repository"
-                  file_path: "src/main.py"
-                  operation: "updated"
-                  user: "username"
-        '401':
+          schema:
+            $ref: '#/definitions/StandardResponse'
+        401:
           description: Authentication required
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '500':
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        500:
           description: Repository modification failed
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
+          schema:
+            $ref: '#/definitions/ErrorResponse'
 
   /clone_template:
     post:
@@ -294,75 +214,39 @@ paths:
       operationId: cloneTemplate
       tags:
         - Repository Operations
-      security:
-        - SessionAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CloneTemplateRequest'
-            example:
-              template_owner: "boddev"
-              template_repo: "GraphConnectorApiTemplate"
-              new_repo_name: "my-new-connector"
+      parameters:
+        - name: body
+          in: body
+          description: Clone template request
+          required: false
+          schema:
+            $ref: '#/definitions/CloneTemplateRequest'
       responses:
-        '200':
+        200:
           description: Repository cloned successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/StandardResponse'
-              example:
-                success: true
-                message: "Repository created successfully from template"
-                data:
-                  new_repository: "username/my-new-connector"
-                  template: "boddev/GraphConnectorApiTemplate"
-                  clone_url: "https://github.com/username/my-new-connector.git"
-                  html_url: "https://github.com/username/my-new-connector"
-                  user: "username"
-        '400':
+          schema:
+            $ref: '#/definitions/StandardResponse'
+        400:
           description: Bad request - invalid template or repository exists
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '401':
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        401:
           description: Authentication required
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '403':
-          description: Insufficient permissions or rate limit exceeded
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '404':
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        404:
           description: Template repository not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '409':
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        409:
           description: Repository with same name already exists
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '429':
-          description: Rate limit exceeded
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
+          schema:
+            $ref: '#/definitions/ErrorResponse'
 
   /clone_template_with_token:
     post:
       summary: Clone Template with Direct Token
-      description: Create a new repository from a template using direct token authentication (perfect for Power Platform Agent integration)
+      description: Create a new repository from a template using direct token authentication
       operationId: cloneTemplateWithToken
       tags:
         - Repository Operations
@@ -371,44 +255,26 @@ paths:
           in: query
           description: GitHub personal access token
           required: true
+          type: string
+        - name: body
+          in: body
+          description: Clone template request
+          required: false
           schema:
-            type: string
-          example: "ghp_xxxxxxxxxxxxxxxxxxxx"
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CloneTemplateRequest'
-            example:
-              template_owner: "boddev"
-              template_repo: "GraphConnectorApiTemplate"
-              new_repo_name: "my-new-connector"
+            $ref: '#/definitions/CloneTemplateRequest'
       responses:
-        '200':
+        200:
           description: Repository cloned successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/StandardResponse'
-              example:
-                success: true
-                message: "Repository created successfully from template"
-                data:
-                  new_repository: "username/my-new-connector"
-                  user: "username"
-        '401':
+          schema:
+            $ref: '#/definitions/StandardResponse'
+        401:
           description: Invalid GitHub token
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '500':
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        500:
           description: Failed to clone template
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
+          schema:
+            $ref: '#/definitions/ErrorResponse'
 
   /get_schema:
     get:
@@ -422,37 +288,21 @@ paths:
           in: query
           description: URL of the external API endpoint to analyze
           required: true
-          schema:
-            type: string
-            format: uri
-          example: "https://api.example.com/schema"
+          type: string
+          format: uri
       responses:
-        '200':
+        200:
           description: Schema retrieved successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/StandardResponse'
-              example:
-                success: true
-                message: "Schema retrieved successfully"
-                data:
-                  url: "https://api.example.com/schema"
-                  schema: {}
-                  content_type: "application/json"
-                  status_code: 200
-        '400':
+          schema:
+            $ref: '#/definitions/StandardResponse'
+        400:
           description: Invalid URL format
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '500':
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        500:
           description: Network error retrieving schema
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
+          schema:
+            $ref: '#/definitions/ErrorResponse'
 
   /health:
     get:
@@ -462,20 +312,10 @@ paths:
       tags:
         - General
       responses:
-        '200':
+        200:
           description: API is healthy
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/StandardResponse'
-              example:
-                success: true
-                message: "API is healthy"
-                data:
-                  status: "healthy"
-                  timestamp: 1703097600
-                  version: "1.0.0"
-                  github_oauth_configured: true
+          schema:
+            $ref: '#/definitions/StandardResponse'
 
   /logout:
     get:
@@ -485,18 +325,10 @@ paths:
       tags:
         - Authentication
       responses:
-        '200':
+        200:
           description: Successfully logged out
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/StandardResponse'
-              example:
-                success: true
-                message: "Successfully logged out"
-                data:
-                  authenticated: false
-                  login_url: "/login"
+          schema:
+            $ref: '#/definitions/StandardResponse'
 
   # Debug Endpoints
   /debug/oauth-url:
@@ -507,25 +339,10 @@ paths:
       tags:
         - Debug
       responses:
-        '200':
+        200:
           description: OAuth URL configuration
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  oauth_url:
-                    type: string
-                  client_id:
-                    type: string
-                  redirect_uri:
-                    type: string
-                  encoded_redirect_uri:
-                    type: string
-                  scopes:
-                    type: string
-                  note:
-                    type: string
+          schema:
+            type: object
 
   /debug/token-exchange:
     get:
@@ -538,22 +355,12 @@ paths:
         - name: code
           in: query
           required: true
-          schema:
-            type: string
+          type: string
       responses:
-        '200':
+        200:
           description: Token exchange debug information
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status_code:
-                    type: integer
-                  response_data:
-                    type: object
-                  request_data:
-                    type: object
+          schema:
+            type: object
 
   /debug/token-permissions:
     get:
@@ -562,32 +369,11 @@ paths:
       operationId: debugTokenPermissions
       tags:
         - Debug
-      security:
-        - SessionAuth: []
       responses:
-        '200':
+        200:
           description: Token permissions information
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  user:
-                    $ref: '#/components/schemas/GitHubUser'
-                  token_scopes_header:
-                    type: string
-                  user_endpoint_status:
-                    type: integer
-                  repos_endpoint_status:
-                    type: integer
-                  repos_access:
-                    type: boolean
-                  rate_limit_remaining:
-                    type: string
-                  rate_limit_limit:
-                    type: string
-                  can_access_repos:
-                    type: boolean
+          schema:
+            type: object
 
   /debug/oauth-flow:
     get:
@@ -597,143 +383,96 @@ paths:
       tags:
         - Debug
       responses:
-        '200':
+        200:
           description: OAuth flow debug information
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  oauth_config:
-                    type: object
-                    properties:
-                      client_id:
-                        type: string
-                      redirect_uri:
-                        type: string
-                      auth_url:
-                        type: string
-                      scopes_requested:
-                        type: string
-                  session_info:
-                    type: object
-                  github_api_test:
-                    type: object
+          schema:
+            type: object
 
-components:
-  securitySchemes:
-    SessionAuth:
-      type: apiKey
-      in: cookie
-      name: session
-      description: Session-based authentication using GitHub OAuth token stored in session
-    GitHubOAuth:
-      type: oauth2
-      flows:
-        authorizationCode:
-          authorizationUrl: https://github.com/login/oauth/authorize
-          tokenUrl: https://github.com/login/oauth/access_token
-          scopes:
-            repo: Repository access
-            user: User information
+definitions:
+  StandardResponse:
+    type: object
+    required:
+      - success
+      - message
+    properties:
+      success:
+        type: boolean
+        description: Indicates if the operation was successful
+      message:
+        type: string
+        description: Human-readable message
+      data:
+        type: object
+        description: Response data
+      error_code:
+        type: string
+        description: Error code if applicable
 
-  schemas:
-    StandardResponse:
-      type: object
-      required:
-        - success
-        - message
-      properties:
-        success:
-          type: boolean
-          description: Indicates if the operation was successful
-        message:
-          type: string
-          description: Human-readable message
-        data:
-          type: object
-          description: Response data
-          additionalProperties: true
-        error_code:
-          type: string
-          description: Error code if applicable
+  ErrorResponse:
+    type: object
+    required:
+      - success
+      - message
+    properties:
+      success:
+        type: boolean
+        description: Operation failed
+        default: false
+      message:
+        type: string
+        description: Error message
+      error_code:
+        type: string
+        description: HTTP status code as string
 
-    ErrorResponse:
-      type: object
-      required:
-        - success
-        - message
-      properties:
-        success:
-          type: boolean
-          example: false
-        message:
-          type: string
-          description: Error message
-        error_code:
-          type: string
-          description: HTTP status code as string
+  ModifyRepoRequest:
+    type: object
+    required:
+      - repo_name
+      - file_path
+      - file_content
+    properties:
+      repo_name:
+        type: string
+        description: Name of the repository to modify
+      file_path:
+        type: string
+        description: Path to the file in the repository
+      file_content:
+        type: string
+        description: Content to write to the file
 
-    ModifyRepoRequest:
-      type: object
-      required:
-        - repo_name
-        - file_path
-        - file_content
-      properties:
-        repo_name:
-          type: string
-          description: Name of the repository to modify
-          example: "my-repository"
-        file_path:
-          type: string
-          description: Path to the file in the repository
-          example: "src/main.py"
-        file_content:
-          type: string
-          description: Content to write to the file
-          example: "print('Hello World')"
+  CloneTemplateRequest:
+    type: object
+    properties:
+      template_owner:
+        type: string
+        description: Owner of the template repository
+        default: boddev
+      template_repo:
+        type: string
+        description: Name of the template repository
+        default: GraphConnectorApiTemplate
+      new_repo_name:
+        type: string
+        description: Name for the new repository
+        default: myGcTemplate
 
-    CloneTemplateRequest:
-      type: object
-      required:
-        - template_owner
-        - template_repo
-        - new_repo_name
-      properties:
-        template_owner:
-          type: string
-          description: Owner of the template repository
-          example: "boddev"
-          default: "boddev"
-        template_repo:
-          type: string
-          description: Name of the template repository
-          example: "GraphConnectorApiTemplate"
-          default: "GraphConnectorApiTemplate"
-        new_repo_name:
-          type: string
-          description: Name for the new repository
-          example: "my-new-connector"
-          default: "myGcTemplate"
-
-    GitHubUser:
-      type: object
-      properties:
-        login:
-          type: string
-          description: GitHub username
-        name:
-          type: string
-          description: User's display name
-          nullable: true
-        id:
-          type: integer
-          description: GitHub user ID
-        avatar_url:
-          type: string
-          format: uri
-          description: URL to user's avatar image
+  GitHubUser:
+    type: object
+    properties:
+      login:
+        type: string
+        description: GitHub username
+      name:
+        type: string
+        description: User's display name
+      id:
+        type: integer
+        description: GitHub user ID
+      avatar_url:
+        type: string
+        description: URL to user's avatar image
 
 tags:
   - name: General
@@ -746,7 +485,3 @@ tags:
     description: Utility endpoints for external integrations
   - name: Debug
     description: Debug endpoints for troubleshooting
-
-externalDocs:
-  description: FastAPI Documentation
-  url: https://connectorcreator-fyduenajachkcxax.northcentralus-01.azurewebsites.net/docs

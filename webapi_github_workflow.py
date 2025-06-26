@@ -15,9 +15,109 @@ from github import Github
 import os
 import urllib.parse
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Application Insights imports
+try:
+    from opencensus.ext.azure.log_exporter import AzureLogHandler
+    from opencensus.ext.azure.trace_exporter import AzureExporter
+    from opencensus.trace.samplers import ProbabilitySampler
+    from opencensus.trace import config_integration
+    AZURE_LOGGING_AVAILABLE = True
+except ImportError:
+    AZURE_LOGGING_AVAILABLE = False
+    print("Warning: Azure logging packages not available. Install 'opencensus-ext-azure' for Application Insights integration.")
+
+# Configure logging with Application Insights
+def setup_logging():
+    """Configure logging with Application Insights integration"""
+    
+    # Basic logging configuration
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
+    logger = logging.getLogger(__name__)
+    
+    # Add Application Insights handler if available and configured
+    app_insights_connection_string = os.getenv('APPLICATIONINSIGHTS_CONNECTION_STRING',"InstrumentationKey=af576058-8de0-413d-bf88-8c3ddc51c6df;IngestionEndpoint=https://northcentralus-0.in.applicationinsights.azure.com/;LiveEndpoint=https://northcentralus.livediagnostics.monitor.azure.com/;ApplicationId=31c112fd-22ef-4e2b-8083-bf9ce2e82915")
+    
+    if app_insights_connection_string and AZURE_LOGGING_AVAILABLE:
+        try:
+            # Create Azure Log Handler
+            azure_handler = AzureLogHandler(connection_string=app_insights_connection_string)
+            azure_handler.setLevel(logging.INFO)
+            
+            # Add custom properties to all logs
+            def add_custom_properties(envelope):
+                envelope.tags['ai.cloud.role'] = 'github-integration-api'
+                envelope.tags['ai.cloud.roleInstance'] = 'power-platform-connector'
+                envelope.tags['ai.application.ver'] = '1.0.0'
+                return True
+            
+            azure_handler.add_telemetry_processor(add_custom_properties)
+            
+            # Add the handler to the logger
+            logger.addHandler(azure_handler)
+            
+            # Configure trace integration for requests
+            config_integration.trace_integrations(['requests'])
+            
+            logger.info("✅ Application Insights logging configured successfully")
+            logger.info(f"Connection string configured: {app_insights_connection_string[:50]}...")
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to configure Application Insights logging: {str(e)}")
+            logger.warning("Falling back to console logging only")
+            
+    elif not app_insights_connection_string:
+        logger.warning("⚠️ APPLICATIONINSIGHTS_CONNECTION_STRING environment variable not set")
+        logger.info("Logs will only be sent to console/stdout")
+        
+    elif not AZURE_LOGGING_AVAILABLE:
+        logger.warning("⚠️ Azure logging packages not installed")
+        logger.info("Install 'opencensus-ext-azure' to enable Application Insights logging")
+    
+    return logger
+
+# Initialize logging
+logger = setup_logging()
+
+# Structured logging helper for better Application Insights integration
+def log_structured_event(event_type: str, level: str = "INFO", **kwargs):
+    """
+    Log structured events that will appear nicely in Application Insights
+    
+    Args:
+        event_type: Type of event (e.g., 'oauth_login', 'token_exchange', 'api_call')
+        level: Log level (INFO, WARNING, ERROR)
+        **kwargs: Additional properties to include in the log
+    """
+    log_data = {
+        'event_type': event_type,
+        'timestamp': time.time(),
+        **kwargs
+    }
+    
+    # Remove None values and sensitive data
+    filtered_data = {}
+    for key, value in log_data.items():
+        if value is not None:
+            # Mask sensitive data
+            if 'token' in key.lower() and isinstance(value, str) and len(value) > 10:
+                filtered_data[key] = f"{value[:10]}***"
+            elif 'secret' in key.lower():
+                filtered_data[key] = "***MASKED***"
+            else:
+                filtered_data[key] = value
+    
+    message = f"[{event_type}] Event logged"
+    
+    if level.upper() == "ERROR":
+        logger.error(message, extra={'custom_dimensions': filtered_data})
+    elif level.upper() == "WARNING":
+        logger.warning(message, extra={'custom_dimensions': filtered_data})
+    else:
+        logger.info(message, extra={'custom_dimensions': filtered_data})
 
 # Rate limiting
 limiter = Limiter(key_func=get_remote_address)
@@ -38,7 +138,8 @@ CLIENT_ID = os.getenv('GITHUB_CLIENT_ID', 'Ov23li8CQAivGoBQeDol')
 CLIENT_SECRET = os.getenv('GITHUB_CLIENT_SECRET', '2ce7252b751c6e1094f6d525a2513a4742fe684b')
 
 # Use YOUR API's callback endpoint - not Power Platform's
-REDIRECT_URI = os.getenv('REDIRECT_URI', 'https://connectorcreator-fyduenajachkcxax.northcentralus-01.azurewebsites.net/callback')  # Your API endpoint
+REDIRECT_URI_API = 'https://connectorcreator-fyduenajachkcxax.northcentralus-01.azurewebsites.net/callback'
+REDIRECT_URI_POWER_PLATFORM = 'https://global.consent.azure-apim.net/redirect'
 
 # GitHub OAuth URLs
 AUTHORIZE_URL = 'https://github.com/login/oauth/authorize'
@@ -182,20 +283,104 @@ async def home(request: Request):
 async def login(request: Request):
     """
     Initiate GitHub OAuth2 authentication flow
-    Always uses YOUR API's callback endpoint
+    Chooses redirect URI based on source
     """
+    logger.info("=== LOGIN ENDPOINT START ===")
+    
+    # Log structured event for Application Insights
+    log_structured_event(
+        "oauth_login_initiated",
+        request_url=str(request.url),
+        request_method=request.method,
+        client_ip=request.client.host if request.client else 'Unknown',
+        headers=dict(request.headers),
+        query_params=dict(request.query_params)
+    )
+    
+    # Check if request is from Power Platform
+    user_agent = request.headers.get('user-agent', '').lower()
+    source = request.query_params.get('source', 'api')
+    
+    # Determine redirect URI logic
+    is_powerplatform_ua = 'powerplatform' in user_agent
+    is_microsoft_ua = 'microsoft' in user_agent
+    is_powerplatform_source = source == 'powerplatform'
+    
+    log_structured_event(
+        "oauth_redirect_decision",
+        user_agent=user_agent,
+        source=source,
+        is_powerplatform_ua=is_powerplatform_ua,
+        is_microsoft_ua=is_microsoft_ua,
+        is_powerplatform_source=is_powerplatform_source
+    )
+    
+    # Use Power Platform redirect for Power Platform requests
+    if source == 'powerplatform' or 'powerplatform' in user_agent or 'microsoft' in user_agent:
+        redirect_uri = REDIRECT_URI_POWER_PLATFORM
+        redirect_type = "power_platform"
+    else:
+        redirect_uri = REDIRECT_URI_API
+        redirect_type = "direct_api"
+    
+    log_structured_event(
+        "oauth_redirect_selected",
+        redirect_uri=redirect_uri,
+        redirect_type=redirect_type
+    )
+    
     # Store the original requester info for later redirect
     power_platform_callback = request.query_params.get('callback_url')
+    
     if power_platform_callback:
-        request.session['power_platform_callback'] = power_platform_callback
+        try:
+            request.session['power_platform_callback'] = power_platform_callback
+            log_structured_event("session_data_stored", data_type="power_platform_callback")
+        except Exception as e:
+            log_structured_event("session_storage_failed", "ERROR", 
+                                data_type="power_platform_callback", 
+                                error=str(e))
     
-    # Fix URL encoding - use proper URL encoding
-    encoded_redirect_uri = urllib.parse.quote(REDIRECT_URI, safe='')
-    # Request repo and user scopes (repo includes public_repo permissions)
-    auth_url = f"{AUTHORIZE_URL}?scope=repo%20user&client_id={CLIENT_ID}&redirect_uri={encoded_redirect_uri}"
+    # Store which redirect URI we're using
+    try:
+        request.session['oauth_redirect_uri'] = redirect_uri
+        log_structured_event("session_data_stored", data_type="oauth_redirect_uri")
+    except Exception as e:
+        log_structured_event("session_storage_failed", "ERROR", 
+                            data_type="oauth_redirect_uri", 
+                            error=str(e))
     
-    logger.info(f"Initiating GitHub OAuth authentication with API callback: {REDIRECT_URI}")
-    return RedirectResponse(auth_url)
+    # Build OAuth URL
+    try:
+        encoded_redirect_uri = urllib.parse.quote(redirect_uri, safe='')
+        auth_url = f"{AUTHORIZE_URL}?scope=repo%20user&client_id={CLIENT_ID}&redirect_uri={encoded_redirect_uri}"
+        
+        log_structured_event(
+            "oauth_url_generated",
+            original_redirect_uri=redirect_uri,
+            encoded_redirect_uri=encoded_redirect_uri,
+            client_id=CLIENT_ID,
+            scopes="repo user"
+        )
+        
+    except Exception as e:
+        log_structured_event("oauth_url_generation_failed", "ERROR", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to build OAuth URL: {str(e)}"
+        )
+    
+    log_structured_event("oauth_redirect_initiated", redirect_uri=redirect_uri)
+    logger.info("=== LOGIN ENDPOINT END - REDIRECTING TO GITHUB ===")
+    
+    try:
+        return RedirectResponse(auth_url)
+    except Exception as e:
+        log_structured_event("redirect_response_failed", "ERROR", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to redirect to GitHub: {str(e)}"
+        )
 
 @app.get("/callback")
 @limiter.limit("10/minute")
@@ -204,50 +389,155 @@ async def callback(request: Request):
     Handle OAuth2 callback from GitHub
     This is YOUR API endpoint that GitHub calls back to
     """
+    logger.info("=== CALLBACK ENDPOINT START ===")
+    
+    # Log structured event for Application Insights
+    log_structured_event(
+        "oauth_callback_received",
+        callback_url=str(request.url),
+        request_method=request.method,
+        client_ip=request.client.host if request.client else 'Unknown',
+        query_params=dict(request.query_params)
+    )
+    
+    # Get and validate authorization code
     code = request.query_params.get('code')
+    error = request.query_params.get('error')
+    error_description = request.query_params.get('error_description')
+    state = request.query_params.get('state')
+    
+    log_structured_event(
+        "oauth_callback_params",
+        has_code=code is not None,
+        code_length=len(code) if code else 0,
+        has_error=error is not None,
+        error=error,
+        error_description=error_description,
+        state=state
+    )
+    
+    if error:
+        log_structured_event("oauth_callback_error", "ERROR", 
+                            github_error=error, 
+                            github_error_description=error_description)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"GitHub OAuth error: {error} - {error_description or 'No description provided'}"
+        )
+    
     if not code:
+        log_structured_event("oauth_callback_missing_code", "ERROR")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Authorization code not provided"
         )
     
-
+    # Log session state
+    try:
+        session_keys = list(request.session.keys())
+        stored_redirect_uri = request.session.get('oauth_redirect_uri')
+        stored_pp_callback = request.session.get('power_platform_callback')
+        
+        log_structured_event(
+            "session_state_check",
+            session_keys=session_keys,
+            has_stored_redirect=stored_redirect_uri is not None,
+            has_pp_callback=stored_pp_callback is not None
+        )
+        
+    except Exception as e:
+        log_structured_event("session_read_failed", "ERROR", error=str(e))
+        stored_redirect_uri = None
     
+    # Determine which redirect URI to use for token exchange
+    redirect_uri_for_token = stored_redirect_uri or REDIRECT_URI_API
+    
+    log_structured_event(
+        "token_exchange_prep",
+        redirect_uri_for_token=redirect_uri_for_token,
+        using_fallback=stored_redirect_uri is None
+    )
+    
+    # Debug mode check
     debug = request.query_params.get('debug')
     if debug and debug.lower() == 'true':
-        logger.info(f"Debug mode enabled for callback with code: {code}")
-        return JSONResponse(
-            content={
-                "message": "Debug mode is active",
-                "code": code,
-                "redirect_uri": REDIRECT_URI,
-                "client_id": CLIENT_ID
-            },
-            status_code=status.HTTP_200_OK
-        )
+        log_structured_event("debug_mode_activated")
+        debug_info = {
+            "message": "Debug mode is active",
+            "code": code,
+            "redirect_uri": redirect_uri_for_token,
+            "client_id": CLIENT_ID,
+            "session_data": {
+                "oauth_redirect_uri": stored_redirect_uri,
+                "power_platform_callback": stored_pp_callback,
+                "session_keys": session_keys
+            }
+        }
+        return JSONResponse(content=debug_info, status_code=status.HTTP_200_OK)
     
     try:
-        # Exchange code for token using YOUR callback URI
-        token = await get_access_token(code, REDIRECT_URI)
-        request.session['github_token'] = token
+        log_structured_event("token_exchange_starting")
+        
+        # Exchange code for token using stored redirect URI
+        token = await get_access_token(code, redirect_uri_for_token)
+        
+        log_structured_event(
+            "token_exchange_success",
+            token_length=len(token) if token else 0
+        )
+        
+        # Store token in session
+        try:
+            request.session['github_token'] = token
+            log_structured_event("token_stored_in_session")
+        except Exception as e:
+            log_structured_event("token_storage_failed", "ERROR", error=str(e))
+            raise
         
         # Get user info to verify token
         user_info = await get_github_user(request)
         
-        logger.info(f"User authenticated successfully: {user_info['login']}")
+        log_structured_event(
+            "user_validation_success",
+            user_login=user_info.get('login', 'Unknown'),
+            user_id=user_info.get('id'),
+            user_name=user_info.get('name')
+        )
         
         # Check if this came from Power Platform and redirect back
         power_platform_callback = request.session.get('power_platform_callback')
+        
         if power_platform_callback:
-            # Clean up session
-            del request.session['power_platform_callback']
+            log_structured_event(
+                "power_platform_redirect_prep",
+                callback_url=power_platform_callback,
+                user_login=user_info['login']
+            )
+            
+            try:
+                # Clean up session
+                del request.session['power_platform_callback']
+                if 'oauth_redirect_uri' in request.session:
+                    del request.session['oauth_redirect_uri']
+                log_structured_event("session_cleanup_success")
+            except Exception as e:
+                log_structured_event("session_cleanup_failed", "WARNING", error=str(e))
             
             # Redirect back to Power Platform with success indicator
             callback_url = f"{power_platform_callback}?auth_success=true&user={user_info['login']}"
+            
+            log_structured_event(
+                "power_platform_redirect_executed",
+                final_callback_url=callback_url
+            )
+            
+            logger.info("=== CALLBACK ENDPOINT END - REDIRECTING TO POWER PLATFORM ===")
             return RedirectResponse(callback_url)
         
+        log_structured_event("direct_api_response", user_login=user_info['login'])
+        
         # Direct API access - return JSON response
-        return StandardResponse(
+        response_data = StandardResponse(
             success=True,
             message="GitHub authentication successful",
             data={
@@ -256,12 +546,34 @@ async def callback(request: Request):
             }
         )
         
+        logger.info("=== CALLBACK ENDPOINT END - SUCCESS ===")
+        return response_data
+        
     except Exception as e:
-        logger.error(f"Authentication callback error: {str(e)}")
+        log_structured_event(
+            "oauth_callback_error", "ERROR",
+            error=str(e),
+            error_type=type(e).__name__
+        )
+        
+        # Log stack trace for debugging
+        import traceback
+        logger.error(f"Stack trace: {traceback.format_exc()}")
         
         # If from Power Platform, redirect back with error
         power_platform_callback = request.session.get('power_platform_callback')
         if power_platform_callback:
+            log_structured_event(
+                "power_platform_error_redirect",
+                callback_url=power_platform_callback,
+                error=str(e)
+            )
+            
+            try:
+                del request.session['power_platform_callback']
+            except:
+                pass
+            
             callback_url = f"{power_platform_callback}?auth_success=false&error={str(e)}"
             return RedirectResponse(callback_url)
         
@@ -270,7 +582,7 @@ async def callback(request: Request):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"GitHub authentication failed: {str(e)}"
         )
-    
+
 @app.get("/get_auth_token")
 @limiter.limit("10/minute")
 async def get_auth_token(request: Request):
@@ -323,8 +635,14 @@ async def get_auth_token(request: Request):
 async def get_access_token(code: str, redirect_uri: str) -> str:
     """
     Exchange authorization code for GitHub access token
-    Always uses YOUR API's callback URI
+    Uses the provided redirect URI for token exchange
     """
+    log_structured_event(
+        "token_exchange_initiated",
+        code_length=len(code) if code else 0,
+        redirect_uri=redirect_uri
+    )
+    
     data = {
         'client_id': CLIENT_ID,
         'client_secret': CLIENT_SECRET,
@@ -332,13 +650,31 @@ async def get_access_token(code: str, redirect_uri: str) -> str:
         'redirect_uri': redirect_uri
     }
     
-    # Log the request data (without exposing the secret)
-    log_data = data.copy()
-    log_data['client_secret'] = f"{CLIENT_SECRET[:8]}..." if CLIENT_SECRET else "NOT_SET"
-    logger.info(f"Token exchange request data: {log_data}")
+    # Validate required parameters
+    if not CLIENT_ID:
+        log_structured_event("token_exchange_validation_failed", "ERROR", missing_param="CLIENT_ID")
+        raise Exception("GitHub CLIENT_ID is not configured")
+    
+    if not CLIENT_SECRET:
+        log_structured_event("token_exchange_validation_failed", "ERROR", missing_param="CLIENT_SECRET")
+        raise Exception("GitHub CLIENT_SECRET is not configured")
+    
+    if not code:
+        log_structured_event("token_exchange_validation_failed", "ERROR", missing_param="code")
+        raise Exception("Authorization code is required")
+    
+    if not redirect_uri:
+        log_structured_event("token_exchange_validation_failed", "ERROR", missing_param="redirect_uri")
+        raise Exception("Redirect URI is required")
     
     try:
-        logger.info(f"Making POST request to: {TOKEN_URL}")
+        log_structured_event(
+            "github_token_request",
+            token_url=TOKEN_URL,
+            client_id=CLIENT_ID,
+            redirect_uri=redirect_uri
+        )
+        
         response = requests.post(
             TOKEN_URL, 
             headers={'Accept': 'application/json'}, 
@@ -346,34 +682,80 @@ async def get_access_token(code: str, redirect_uri: str) -> str:
             timeout=30
         )
         
-        # Log the response details
-        logger.info(f"Token exchange response status: {response.status_code}")
-        logger.info(f"Token exchange response headers: {dict(response.headers)}")
-        logger.info(f"Token exchange response text: {response.text}")
+        log_structured_event(
+            "github_token_response",
+            status_code=response.status_code,
+            response_content_length=len(response.content),
+            response_headers=dict(response.headers)
+        )
         
         if response.status_code != 200:
+            log_structured_event(
+                "github_token_error", "ERROR",
+                status_code=response.status_code,
+                response_text=response.text
+            )
             raise Exception(f"HTTP {response.status_code}: {response.text}")
-            
-        response_data = response.json()
-        logger.info(f"Parsed response data keys: {list(response_data.keys())}")
         
+        try:
+            response_data = response.json()
+            log_structured_event(
+                "github_token_parsed",
+                response_keys=list(response_data.keys())
+            )
+        except ValueError as e:
+            log_structured_event("github_token_parse_failed", "ERROR", error=str(e))
+            raise Exception(f"Invalid JSON response from GitHub: {str(e)}")
+        
+        # Check for error in response
         if 'error' in response_data:
             error_msg = response_data.get('error_description', response_data.get('error', 'Unknown error'))
-            logger.error(f"GitHub OAuth error in response: {error_msg}")
+            log_structured_event(
+                "github_oauth_error", "ERROR",
+                github_error=response_data.get('error'),
+                github_error_description=response_data.get('error_description')
+            )
             raise Exception(f"GitHub OAuth error: {error_msg}")
         
+        # Check for access token
         if 'access_token' not in response_data:
-            logger.error(f"No access token in response. Response data: {response_data}")
+            log_structured_event(
+                "github_token_missing", "ERROR",
+                available_keys=list(response_data.keys())
+            )
             raise Exception(f"No access token in response: {response_data}")
         
-        logger.info("Access token successfully obtained")
-        return response_data['access_token']
+        access_token = response_data['access_token']
+        token_type = response_data.get('token_type', 'bearer')
+        scope = response_data.get('scope', 'unknown')
+        
+        log_structured_event(
+            "github_token_success",
+            token_type=token_type,
+            token_scope=scope,
+            token_length=len(access_token)
+        )
+        
+        return access_token
         
     except requests.RequestException as e:
-        logger.error(f"Network error during token exchange: {str(e)}")
+        log_structured_event(
+            "github_token_network_error", "ERROR",
+            error=str(e),
+            error_type=type(e).__name__
+        )
         raise Exception(f"Network error during token exchange: {str(e)}")
+        
     except Exception as e:
-        logger.error(f"Token exchange failed with exception: {str(e)}")
+        log_structured_event(
+            "github_token_general_error", "ERROR",
+            error=str(e),
+            error_type=type(e).__name__
+        )
+        
+        # Log stack trace for debugging
+        import traceback
+        logger.error(f"Stack trace: {traceback.format_exc()}")
         raise
 
 # Add endpoint for Power Platform to check auth status
