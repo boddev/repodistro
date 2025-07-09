@@ -134,8 +134,8 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # GitHub OAuth Configuration
-CLIENT_ID = os.getenv('GITHUB_CLIENT_ID', 'Ov23li8CQAivGoBQeDol')
-CLIENT_SECRET = os.getenv('GITHUB_CLIENT_SECRET', '2ce7252b751c6e1094f6d525a2513a4742fe684b')
+CLIENT_ID = os.getenv('GITHUB_CLIENT_ID')
+CLIENT_SECRET = os.getenv('GITHUB_CLIENT_SECRET')
 
 # Use YOUR API's callback endpoint - not Power Platform's
 REDIRECT_URI_API = 'https://connectorcreator-fyduenajachkcxax.northcentralus-01.azurewebsites.net/callback'
